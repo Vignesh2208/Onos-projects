@@ -1,0 +1,6 @@
+## HMM Based IDS for SCADA
+```
+Contains src code for HMM Based IDS system for SCADA networks. It 
+considers system data level features and network level features
+and models them as multivariate time series for anomaly detection.
+```
