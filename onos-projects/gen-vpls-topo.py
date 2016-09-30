@@ -10,11 +10,12 @@ from mininet.term import makeTerm
 
 from functools import partial
 import os
+import readTopoConfiguration
 from readTopoConfiguration import *
 import httplib2
 import json
 import urllib
-#from mininet.examples.vlanhost import VLANHost
+
 
 #controllerIP='72.36.82.150'
 #controllerPort=40002
@@ -24,10 +25,13 @@ controllerIP='172.17.0.2'
 controllerPort=6653
 networkCfgPort=8181
 
+
 nGrids = 1
-nSwitchesPerGrid = 3 
+nSwitchesPerGrid = 3 # >= 2
 nHostsPerSwitch = 3
 controlVlanId = 255
+controlVlanTCPSource = 100
+controlVlanTCPDest = 100
 
 class VLANHost( Host ):
 
@@ -144,8 +148,9 @@ def runTopology(topoConfigFile):
 		net.addLink(SwitchObjs[switch1Name],SwitchObjs[switch2Name])	
 
 	# generate onos Network Cfg
-	generateNetworkCfg(SwitchPortVlanMapping)
+
 	scriptDir = os.path.dirname(os.path.realpath(__file__))
+	readTopoConfiguration.generateNetworkCfg(scriptDir + "/network-cfg.json",SwitchPortVlanMapping)
 	os.system("curl --user karaf:karaf -X POST -H \"Content-Type: application/json\" http://" + str(controllerIP) + ":" + str(networkCfgPort) + "/onos/v1/network/configuration/ -d" + "@" + str(scriptDir) + "/network-cfg.json")
 	print "*** Starting network" 
 	net.build()
@@ -171,7 +176,7 @@ def runTopology(topoConfigFile):
 		switch.start([c1])
 
 	pingHosts(HostObjs)
-	#installControlVlanFlows()
+	installControlVlanFlows()
 
 	print "*** Running CLI"
 	CLI( net )
@@ -191,7 +196,7 @@ def runTopology(topoConfigFile):
 
 
 def installControlVlanFlows() :
-	baseURL = "http://" + controllerIP + ":40001/onos/v1/"
+	baseURL = "http://" + controllerIP + ":" + str(networkCfgPort) + "/onos/v1/"
 	userName = "karaf"
 	passwd = "karaf"
 	requestHandler = httplib2.Http()
@@ -201,18 +206,21 @@ def installControlVlanFlows() :
 	getFlowsUrl = baseURL + "flows"
 	resp,content = requestHandler.request(getFlowsUrl,"GET")
 
-	controlVlanTCPSource = 100
-	controlVlanTCPDest = 100
+	
 
 	vplsFlows = json.loads(content)
-	for flow in vplsFlows :
-		deleteFlowUrl = "flows/" + urllib.quote(flow["deviceId"]) + "/" + flow["id"]
+	#print "vplsFlows = ",vplsFlows
+
+	for flow in vplsFlows['flows'] :
+		deleteFlowUrl = baseURL + "flows/" + urllib.quote(flow["deviceId"]) + "/" + flow["id"]
+		
+		#print "Flow = ", flow
 		resp,content = requestHandler.request(deleteFlowUrl,"DELETE")
 		flowCriteria = flow["selector"]["criteria"]
 		for criteria in flowCriteria :
 			if criteria["type"] == "VLAN_VID" :
 				vlanId = criteria["vlanId"]
-				if vlanId == controlVlan :
+				if vlanId == controlVlanId :
 
 					newTCPSrcCriteria = {}
 					newTCPSrcCriteria["type"] = "TCP_SRC"
@@ -229,8 +237,9 @@ def installControlVlanFlows() :
 	
 					
 	
+	print "Updated Flows for controlVlan"
 	updatedFlows = json.dumps(vplsFlows)
-	updateFlowsUrl = baseURL + "flows/"
+	updateFlowUrl = baseURL + "flows/"
 	resp,content = requestHandler.request(updateFlowUrl,"POST",headers={'Content-type':'application/json; charset=UTF-8'},body=updatedFlows)
 	
 
@@ -263,17 +272,19 @@ def pingHosts(HostObjs) :
 	controlSwitch = nSwitches + 1
 	controlHost = nHosts + 1
 	i = 1
-	while  i < nHosts + 1 - nHostsPerSwitch :
+	while  i <= nHosts + 1 - nHostsPerSwitch :
 		enclaveHosts = range(i,i+nHostsPerSwitch,1)
-		print enclaveHosts
 		assert len(enclaveHosts) == nHostsPerSwitch
+		
 		switchId = int((i-1)/nHostsPerSwitch) + 1
 		enclaveVlanId = switchId
+		print "Pinging hosts in enclave: ", enclaveVlanId
 		pingAllHostPairs(HostObjs,enclaveHosts,enclaveVlanId)
 		i = i + nHostsPerSwitch
 
 	controlVlanHosts = range(1,controlHost + 1, nHostsPerSwitch)
 	assert len(controlVlanHosts) == nSwitches + 1
+	print "pinging control vlan hosts .."
 	pingAllHostPairs(HostObjs,controlVlanHosts,controlVlanId)
 	
 	
@@ -321,3 +332,5 @@ if __name__ == '__main__':
 	
 	genUGridTopoConfig("topology-configuration.txt")
 	runTopology("topology-configuration.txt")
+	
+	

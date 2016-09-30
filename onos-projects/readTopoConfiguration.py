@@ -50,8 +50,8 @@ def getInterfaceMAC(hostId,intfId):
 	return mac
 	
 
-def generateNetworkCfg(SwitchPortMapping):
-	with open('network-cfg.json',"w") as f:
+def generateNetworkCfg(filePath,SwitchPortMapping):
+	with open(filePath,"w") as f:
 		f.write("{\n")
 		f.write("	\"ports\": {\n")
 		switchList = sorted(list(SwitchPortMapping.keys()))
@@ -193,5 +193,5 @@ if __name__ == '__main__':
 	print "####SwitchConnections####"
 	print SwitchConnections
 
-	generateNetworkCfg(SwitchPortVlanMapping)
+	generateNetworkCfg('network-cfg.json',SwitchPortVlanMapping)
 
