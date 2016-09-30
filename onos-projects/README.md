@@ -8,4 +8,9 @@ employed Microgrid security policies.
 
 An ONOS controller is used to enforce these policies using VLANs
 and these policies are then validated for correctness
+
+#Dependencies
+ -mininet
+ -vlan (sudo apt-get install vlan)
+ -curl (sudo apt-get install curl)
 ```

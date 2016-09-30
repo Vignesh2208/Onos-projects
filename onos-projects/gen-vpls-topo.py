@@ -11,14 +11,23 @@ from mininet.term import makeTerm
 from functools import partial
 import os
 from readTopoConfiguration import *
+import httplib2
+import json
+import urllib
 #from mininet.examples.vlanhost import VLANHost
 
-controllerIP='72.36.82.150'
-controllerPort=40002
-networkCfgPort=40001
-nGrids = 3
-nSwitchesPerGrid = 3
+#controllerIP='72.36.82.150'
+#controllerPort=40002
+#networkCfgPort=40001
+
+controllerIP='172.17.0.2'
+controllerPort=6653
+networkCfgPort=8181
+
+nGrids = 1
+nSwitchesPerGrid = 3 
 nHostsPerSwitch = 3
+controlVlanId = 255
 
 class VLANHost( Host ):
 
@@ -80,13 +89,13 @@ class VLANHost( Host ):
 		
 
 
-def main():
+def runTopology(topoConfigFile):
 
 	net = Mininet(autoSetMacs=True)
 	c1 = net.addController( 'c1', controller=RemoteController, ip=controllerIP, port=controllerPort)
 
 	print "*** Reading Topology Config"
-	Nodes,SwitchPortVlanMapping,SwitchConnections = parseTopoConfigFile('topo-config.txt')
+	Nodes,SwitchPortVlanMapping,SwitchConnections = parseTopoConfigFile(topoConfigFile)
 	SwitchObjs = {}
 	HostObjs = {}
 
@@ -136,7 +145,8 @@ def main():
 
 	# generate onos Network Cfg
 	generateNetworkCfg(SwitchPortVlanMapping)
-	os.system("curl --user karaf:karaf -X POST -H \"Content-Type: application/json\" http://" + str(controllerIP) + ":" + str(networkCfgPort) + "/onos/v1/network/configuration/ -d @/home/rakesh/onos-projects/network-cfg.json")
+	scriptDir = os.path.dirname(os.path.realpath(__file__))
+	os.system("curl --user karaf:karaf -X POST -H \"Content-Type: application/json\" http://" + str(controllerIP) + ":" + str(networkCfgPort) + "/onos/v1/network/configuration/ -d" + "@" + str(scriptDir) + "/network-cfg.json")
 	print "*** Starting network" 
 	net.build()
 
@@ -160,6 +170,9 @@ def main():
 		switch = SwitchObjs[switchName]
 		switch.start([c1])
 
+	pingHosts(HostObjs)
+	#installControlVlanFlows()
+
 	print "*** Running CLI"
 	CLI( net )
 
@@ -176,9 +189,54 @@ def main():
 	net.stop()
 
 
+
+def installControlVlanFlows() :
+	baseURL = "http://" + controllerIP + ":40001/onos/v1/"
+	userName = "karaf"
+	passwd = "karaf"
+	requestHandler = httplib2.Http()
+	requestHandler.add_credentials(userName,passwd)
+
+
+	getFlowsUrl = baseURL + "flows"
+	resp,content = requestHandler.request(getFlowsUrl,"GET")
+
+	controlVlanTCPSource = 100
+	controlVlanTCPDest = 100
+
+	vplsFlows = json.loads(content)
+	for flow in vplsFlows :
+		deleteFlowUrl = "flows/" + urllib.quote(flow["deviceId"]) + "/" + flow["id"]
+		resp,content = requestHandler.request(deleteFlowUrl,"DELETE")
+		flowCriteria = flow["selector"]["criteria"]
+		for criteria in flowCriteria :
+			if criteria["type"] == "VLAN_VID" :
+				vlanId = criteria["vlanId"]
+				if vlanId == controlVlan :
+
+					newTCPSrcCriteria = {}
+					newTCPSrcCriteria["type"] = "TCP_SRC"
+					newTCPSrcCriteria["tcpPort"] = controlVlanTCPSource
+					flowCriteria.append(newTCPSrcCriteria)
+
+					newTCPDestCriteria = {}
+					newTCPDestCriteria["type"] = "TCP_DST"
+					newTCPDestCriteria["tcpPort"] = controlVlanTCPDest
+					flowCriteria.append(newTCPDestCriteria)
+					
+										
+					break
+	
+					
+	
+	updatedFlows = json.dumps(vplsFlows)
+	updateFlowsUrl = baseURL + "flows/"
+	resp,content = requestHandler.request(updateFlowUrl,"POST",headers={'Content-type':'application/json; charset=UTF-8'},body=updatedFlows)
+	
+
 def pingAllHostPairs(HostObjs,hostIds,vlanId) :
 
-	assert VlanId <= 256
+	assert vlanId <= 256
 	nHosts = len(hostIds)
 	for i in xrange(0,nHosts) :
 		for j in xrange(i+1,nHosts) :
@@ -192,23 +250,22 @@ def pingAllHostPairs(HostObjs,hostIds,vlanId) :
 			srcHost = HostObjs[srcHostName]
 			dstHost = HostObjs[dstHostName]
 			pingCmd = "ping -c 1 -I " + srcHostInterface + " " + dstHostIp
-			srcHostName.cmd(pingCmd)
+			srcHost.cmd(pingCmd)
 
 			
-def installControlVlanFlows() :
-
 
 def pingHosts(HostObjs) :
 
 	nSwitches = nSwitchesPerGrid*nGrids
 	nHosts = nSwitches*nHostsPerSwitch
 	nHostsPerGrid = nSwitchesPerGrid*nHostsPerSwitch
-	controlVlanId = 255
+	
 	controlSwitch = nSwitches + 1
 	controlHost = nHosts + 1
-	
-	for i in xrange(1,nHosts + 1) :
-		enclaveHosts = range(i,i+nHostsPerSwitch + 1,1)
+	i = 1
+	while  i < nHosts + 1 - nHostsPerSwitch :
+		enclaveHosts = range(i,i+nHostsPerSwitch,1)
+		print enclaveHosts
 		assert len(enclaveHosts) == nHostsPerSwitch
 		switchId = int((i-1)/nHostsPerSwitch) + 1
 		enclaveVlanId = switchId
@@ -221,18 +278,18 @@ def pingHosts(HostObjs) :
 	
 	
 					
-def genUGridTopoConfig():
+def genUGridTopoConfig(topoConfigFile):
 	nSwitches = nSwitchesPerGrid*nGrids
 	nHosts = nSwitches*nHostsPerSwitch
 	nHostsPerGrid = nSwitchesPerGrid*nHostsPerSwitch
-	controlVlanId = 255
+
 	controlSwitch = nSwitches + 1
 	controlHost = nHosts + 1
 	
 	assert nHosts > 0
 	assert nSwitches > 0
 
-	with open("topology-configuration.txt","w") as f :
+	with open(topoConfigFile,"w") as f :
 		f.write("h" + str(controlHost) + "_1,s" + str(controlSwitch) + "," + str(controlVlanId) + "\n")
 		for i in xrange(1,nHosts + 1) :
 			switchId = int((i-1)/nHostsPerSwitch) + 1
@@ -261,5 +318,6 @@ def genUGridTopoConfig():
 	
 	
 if __name__ == '__main__':
-	#main()
-	genUGridTopoConfig()
+	
+	genUGridTopoConfig("topology-configuration.txt")
+	runTopology("topology-configuration.txt")
