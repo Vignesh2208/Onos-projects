@@ -132,8 +132,8 @@ def trainHMM(observations,trainSamples,nMixtures=1,nStages=1,cvType='diag') :
 
 	transmat = []
 	startProb = [float(1.0/nStates)]*nStates
-	#startProb = [0.0]*nStates
-	#startProb[0] = 1.0
+	startProb = [0.0]*nStates
+	startProb[0] = 1.0
 	j = 0
 	while j < nStates :
 		transmat.append([0.0]*nStates)
