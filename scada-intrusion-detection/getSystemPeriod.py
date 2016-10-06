@@ -10,6 +10,7 @@ from operator import itemgetter
 from sklearn import mixture
 from operator import truediv
 from hmmlearn import hmm
+#from sklearn import hmm
 from statistics import mean
 from statistics import stdev
 import math
@@ -18,14 +19,16 @@ warnings.simplefilter("ignore", DeprecationWarning)
 
 
 
+nMaxPeriods = 20
+maxMixtures = 1
+windowSize = 60
+testPCA = True
+
 
 argList = sys.argv
-#if len(argList) > 1 :
-#	signal_no = int(argList[1])
-#else:
-#	signal_no = 0
+scriptDir = os.path.dirname(os.path.realpath(__file__))
 
-#print "Signal no = ", signal_no
+
 
 def extractAverageSamplingPeriod(trainSamples):
 	N = len(trainSamples)
@@ -77,16 +80,12 @@ def getStateSimilarityMatrix(observations,nStages,nMixtures) :
 				
 
 def getFFT(signal,T):
-	#signal = np.array(map(itemgetter(signalNo), samples))
+
 	N = len(signal)
-	xf = np.linspace(0.0, 1.0/(2.0), N/2)
+	xf = np.linspace(0.0, 1.0/(2.0*float(T)), N/2)
 	w = blackman(N)
 	ffts = []
 	sfft = fft(np.array(signal)*w)
-	#plt.semilogy(xf[1:N/2], 2.0/N * np.abs(sfft[1:N/2] + 1), '-r')
-	#plt.grid(True)
-	#plt.show()
-	
 
 	return xf,sfft
 	
@@ -106,7 +105,6 @@ def scoreSamples(samples,hmm,windowSize) :
 	N = windowSize
 	nWindows = int(len(samples)/windowSize)
 	nSamples = len(samples)
-	#print "nWindows = ",nWindows, " nSamples = ", len(samples)
 	i = 0
 	while i + N < nSamples :
 		scores.append(hmm.score(np.array(samples[i:i+N])))
@@ -114,7 +112,6 @@ def scoreSamples(samples,hmm,windowSize) :
 		i = i + N
 		
 	scores.append(hmm.score(np.array(samples[i:])))
-	#print "scores ", scores
 	if len(scores) > 1 :
 		return mean(scores),(1.96*stdev(scores))/float(math.sqrt(len(scores)))
 	else :
@@ -122,96 +119,62 @@ def scoreSamples(samples,hmm,windowSize) :
 	
 
 def trainHMM(observations,trainSamples,nMixtures=1,nStages=1,cvType='diag') :
-	j = 0
+
 	nStates = nStages
 	assert nStates > 0
-	while j < nStages :
-		if len(observations[j]['anomalousSamples']) > 0 :
-			nStates = nStates + 1
-		j = j + 1
-
 	transmat = []
 	startProb = [float(1.0/nStates)]*nStates
 	#startProb = [0.0]*nStates
 	#startProb[0] = 1.0
-	j = 0
-	while j < nStates :
+	
+	for j in xrange(0,nStates) :
 		transmat.append([0.0]*nStates)
-		j = j + 1
+		transmat[j][j] = 1
 
-	anomalyStateId = nStages
-	nAnomalyStates = nStates - nStages
-	#print "nAnomalyStates in HMM = ",nAnomalyStates
-	j = 0
-	while j < nStages :
-		
-		if nStates == nStages :
-			transmat[j][j] = 1
-		else:
-			currStage = j % nStages
-			nextStage = (j+1) % nStages
-			prevStage = (j-1) % nStages
-			if len(observations[currStage]['anomalousSamples']) > 0 :
-				transmat[prevStage][currStage] = 0.5
-				transmat[prevStage][anomalyStateId] = 0.5
-				if len(observations[prevStage]['anomalousSamples']) > 0 :
-					transmat[(anomalyStateId -1 -nStages)% nAnomalyStates + nStages][anomalyStateId] = 0.5
-					transmat[(anomalyStateId -1 -nStages)% nAnomalyStates + nStages][currStage] = 0.5
-				anomalyStateId = anomalyStateId + 1
-			else:
-				transmat[prevStage][currStage] = 1
-				if len(observations[prevStage]['anomalousSamples']) > 0 :
-					transmat[(anomalyStateId -1 -nStages)% nAnomalyStates + nStages][currStage] = 1
 
-		j = j + 1
-
+	
+	
 	transmat = np.array(transmat)
-	#print "Transition Probability Matrix = "
-	#print transmat
 	means = []
 	covars = []
 	weights = []
-	j = 0
-	while j < 2*nStages :
+	gmms = []
+
+	for j in xrange(0,nStages) :
 		if j < nStages :
 			gmm = observations[j]['gmms'][nMixtures - 1]
-		elif len(observations[j % nStages]['anomalousSamples']) > 0 : 
-			gmm = observations[j % nStages]['agmms'][nMixtures - 1]
 		
 		if gmm != None :	
-			#print "aPPEND"	
 			means.append(gmm.means_)
 			covars.append(gmm.covars_)
 			weights.append(gmm.weights_)
+			gmms.append(gmm)
 			gmm = None
 
-		j = j + 1
+
 		
 
 	means = np.array(means)
 	covars = np.array(covars)
 	weights = np.array(weights)
-
-	#print "covars = ",covars[0]
-	#print "Shape - ", covars.shape
+	
+	
+	
 
 	if nStates >= nStages :
-		#gmmHMM = hmm.GMMHMM(n_components=nStates,n_mix=nMixtures,covariance_type=cvType,params='mcw', init_params='mcw',n_iter=1000,tol=0.0001)
-
-		
-
-		gmmHMM = hmm.GaussianHMM(n_components=nStates,n_iter=1000,tol=0.0001,params='mcw',covariance_type=cvType,init_params='mcw')
-
+		gmmHMM = hmm.GMMHMM(n_components=nStates,n_mix=nMixtures,covariance_type=cvType,params='', init_params='',n_iter=10000,tol=0.0001)
+		#gmmHMM = hmm.GaussianHMM(n_components=nStates,n_iter=10000,tol=0.0001,params='',covariance_type=cvType,init_params='')
 		gmmHMM.means_ = means
 		gmmHMM.covars_ = covars
 		gmmHMM.weights_ = weights
+
 		gmmHMM.startprob_ = np.array(startProb)
 		gmmHMM.transmat_  = np.array(transmat)
-		gmmHMM.fit(np.array(trainSamples))
+		gmmHMM.gmms_ = gmms
+		#gmmHMM.fit(np.array(trainSamples))
 		
 		print "GMMHMM Score = ", gmmHMM.score(np.array(trainSamples))
-		#print "GMMHMM TransMatrix = "
-		#print gmmHMM.transmat_
+		
 		
 		
 
@@ -219,153 +182,109 @@ def trainHMM(observations,trainSamples,nMixtures=1,nStages=1,cvType='diag') :
 	
 
 
-def trainGMMs(trainSamples,sysPeriod=1,nMaxMixtures=10,filterThreshold=0,cvType='diag') :
+def trainGMMs(trainSamples,sysPeriod=1,nMaxMixtures=10,cvType='full') :
 	assert len(trainSamples) > 0
 	nFeatures = len(trainSamples[0])
 	nSamples = len(trainSamples)
 	nStages = sysPeriod
 	observations = {}
 	featureMax = []
-	i = 0
-	while i < nStages :
+
+	for i in xrange(0,nStages):
 		observations[i] = {}
 		observations[i]['samples'] = []
-		observations[i]['anomalousSamples'] = []
 		observations[i]['gmms'] = []
-		observations[i]['agmms'] = []
 		observations[i]['bic'] = []
-		i = i + 1
-	
-	i = 0	
-	while i < nFeatures :
-		maxVal = max(np.array(map(itemgetter(i), trainSamples))) # need to alter if signal can have negative values
-		if maxVal == 0:
-			maxVal = 1
-		featureMax.append(maxVal)
-		i = i + 1
-		
 
-	i = 0
-	while i < nSamples :
+
+	for i in xrange(0,nSamples):
 		currStage = i % nStages
-		observations[currStage]['samples'].append(map(truediv,trainSamples[i],featureMax))
-		i = i + 1
+		observations[currStage]['samples'].append(trainSamples[i])
 
 
-
-	i = 1
-	min_BIC_List = []
-	while i <= nMaxMixtures :
-		min_BIC = np.infty
-		j =  0
-		while j < nStages :
-			
-
-			g = mixture.GMM(n_components=i,covariance_type=cvType,n_iter=100000)
+	max_BIC_List = []
+	for i in xrange(1,nMaxMixtures+1):
+		max_BIC = -np.infty
+		for j in xrange(0,nStages) :
+			g = mixture.GMM(n_components=i,covariance_type=cvType,n_iter=100000,tol=0.0001)
 			g.fit(np.array(observations[j]['samples']))
 			bic = float(g.bic(np.array(observations[j]['samples'])))
 			observations[j]['bic'].append(bic)
 			observations[j]['gmms'].append(g)
 			
-			if bic < min_BIC :
-				min_BIC = bic
-			j = j + 1
-		
-		min_BIC_List.append(min_BIC)
-		i = i + 1
+			if bic > max_BIC :
+				max_BIC = bic
+		max_BIC_List.append(max_BIC)
+
 	
-	#print "Min BICs For Samples w.r.t nComponents = ", min_BIC_List
-	nS1Mixtures = min_BIC_List.index(min(min_BIC_List)) + 1
-	#print "Stage1 Optimum number of Mixtures = ", nS1Mixtures
-	assert nS1Mixtures <= nMaxMixtures
-	#if  nStages > 1 :
-	if  False :
-		i = 0
-		while i < nStages :
-			j = 0
-			while j < nSamples :
-				if j % nStages != i :
-					currStage = j % nStages 
-					gmm = observations[currStage]['gmms'][nS1Mixtures - 1]
-					assert gmm != None
-					if gmm.score([trainSamples[j]]) < filterThreshold :
-						observations[i]['anomalousSamples'].append(trainSamples[j])
-				j = j + 1
-			i = i + 1
-		
-		i = 1
-		min_BIC_List = []
-		while i <= nMaxMixtures :
-			min_BIC = np.infty
-			j =  0
-			while j < nStages :
-			
-				if len(observations[j]['anomalousSamples']) > 0 :
-					g = mixture.GMM(n_components=i,covariance_type=cvType,n_iter=100000)
-					g.fit(np.array(observations[j]['anomalousSamples']))
-					bic = float(g.bic(np.array(observations[j]['anomalousSamples'])))
-					observations[j]['bic'].append(bic)
-					observations[j]['agmms'].append(g)
-					if bic < min_BIC :
-						min_BIC = bic
-				j = j + 1
-		
-			min_BIC_List.append(min_BIC)
-			i = i + 1	
+	
+	nOptMixtures = max_BIC_List.index(min(max_BIC_List)) + 1
+	
+	#print "Max BICs For Samples w.r.t nMixtures = ", max_BIC_List
+	print "Optimum number of Mixtures = ", nOptMixtures
 
-		#print "Min BICs For Anomalous Samples w.r.t nComponents = ", min_BIC_List
-		nS2Mixtures = min_BIC_List.index(min(min_BIC_List)) + 1
-		#print "Stage2 Optimum number of Mixtures = ", nS2Mixtures
-		assert nS2Mixtures <= nMaxMixtures
-		if nStages > 1 :
-			StateSimilarity = getStateSimilarityMatrix(observations,nStages,nS1Mixtures)
-
-	return observations, nS1Mixtures
+	assert nOptMixtures <= nMaxMixtures
+	return observations, nOptMixtures
 		
 def plotInterestingFFTs(trainCharacteristics) :
 	plt.close('all')
-
 	plt.subplots_adjust(hspace=0.7)
-
 	N= len(trainCharacteristics['FunctionCode'][3])
-	xf,fCode3 = getFFT(trainCharacteristics['FunctionCode'][3],1000)
-	xf,fCode16 = getFFT(trainCharacteristics['FunctionCode'][16],1000)
-	xf,networkBytes = getFFT(trainCharacteristics['Network']['Bytes'],1000)
-	xf,setpoint = getFFT(trainCharacteristics['Registers'][16]['w'],1000)	
-	xf,pipelinePSI = getFFT(trainCharacteristics['Registers'][14]['r'],1000)	
+
+	xf,fCode3 = getFFT(normalize(trainCharacteristics['FunctionCode'][3], [max(trainCharacteristics['FunctionCode'][3])]),1)
+	xf,fCode16 = getFFT(normalize(trainCharacteristics['FunctionCode'][16],[max(trainCharacteristics['FunctionCode'][16])]),1)
+	xf,networkBytes = getFFT(normalize(trainCharacteristics['Network']['Bytes'],[max(trainCharacteristics['Network']['Bytes'])]),1)
+	xf,setpoint = getFFT(normalize(trainCharacteristics['Registers'][16]['w'],[max(trainCharacteristics['Registers'][16]['w'])]),1)	
+	xf,pipelinePSI = getFFT(normalize(trainCharacteristics['Registers'][14]['r'],[max(trainCharacteristics['Registers'][14]['r'])]),1)	
 
 	
 	f,axarr = plt.subplots(3,2)
 	#plt.semilogy(xf,fCode3)
-	axarr[0,0].semilogy(xf[1:N/2], 2.0/N * np.abs(fCode3[1:N/2] + 1), '-r')
+	#axarr[0,0].semilogy(xf[1:N/2], 2.0/N * np.abs(fCode3[1:N/2] + 1), '-r')
+	axarr[0,0].set_ylim(0,max(2.0/N * np.abs(fCode3[1:N/2])))
+	axarr[0,0].set_xlim([-0.05,0.5])
+	axarr[0,0].plot(xf[1:N/2], 2.0/N * np.abs(fCode3[1:N/2]), '-r')
 	axarr[0,0].set_title("FFT - Function Code 3 Access")
 	axarr[0,0].grid(True)
 
 	
 	#plt.semilogy(xf,fCode16)
-	axarr[0,1].semilogy(xf[1:N/2], 2.0/N * np.abs(fCode16[1:N/2] + 1), '-r')
+	#axarr[0,1].semilogy(xf[1:N/2], 2.0/N * np.abs(fCode16[1:N/2] + 1), '-r')
+	axarr[0,1].set_ylim(0,max(2.0/N * np.abs(fCode16[1:N/2])))
+	axarr[0,1].set_xlim([-0.05,0.5])
+	axarr[0,1].plot(xf[1:N/2], 2.0/N * np.abs(fCode16[1:N/2]), '-r')
 	axarr[0,1].set_title("FFT - Function Code 16 Access")
 	axarr[0,1].grid(True)
 
 	
 	#plt.semilogy(xf,setpoint)
-	axarr[1,0].semilogy(xf[1:N/2], 2.0/N * np.abs(setpoint[1:N/2] + 1), '-r')
+	#axarr[1,0].semilogy(xf[1:N/2], 2.0/N * np.abs(setpoint[1:N/2] + 1), '-r')
+	axarr[1,0].set_ylim(0,max(2.0/N * np.abs(setpoint[1:N/2])))
+	axarr[1,0].set_xlim([-0.05,0.5])
+	axarr[1,0].plot(xf[1:N/2], 2.0/N * np.abs(setpoint[1:N/2]), '-r')
 	axarr[1,0].set_title("FFT - Setpoint Reg Write")
 	axarr[1,0].grid(True)
 
 
 	#plt.semilogy(xf,pipelinePSI)
-	axarr[1,1].semilogy(xf[1:N/2], 2.0/N * np.abs(pipelinePSI[1:N/2] + 1), '-r')
+	#axarr[1,1].semilogy(xf[1:N/2], 2.0/N * np.abs(pipelinePSI[1:N/2] + 1), '-r')
+	axarr[1,1].set_ylim(0,max(2.0/N * np.abs(pipelinePSI[1:N/2])))
+	axarr[1,1].set_xlim([-0.05,0.5])
+	axarr[1,1].plot(xf[1:N/2], 2.0/N * np.abs(pipelinePSI[1:N/2]), '-r')
 	axarr[1,1].set_title("FFT - Pressure Reg Read")
 	axarr[1,1].grid(True)
 
 	
 	#plt.semilogy(xf,networkBytes)
-	axarr[2,0].semilogy(xf[1:N/2], 2.0/N * np.abs(networkBytes[1:N/2] + 1), '-r')
+	#axarr[2,0].semilogy(xf[1:N/2], 2.0/N * np.abs(networkBytes[1:N/2] + 1), '-r')
+	axarr[2,0].set_ylim(0,max(2.0/N * np.abs(networkBytes[1:N/2])))
+	axarr[2,0].set_xlim([-0.05,0.5])
+	axarr[2,0].plot(xf[1:N/2], 2.0/N * np.abs(networkBytes[1:N/2]), '-r')
 	axarr[2,0].set_title("FFT - Network Bytes")
 	axarr[2,0].grid(True)
 
 	axarr[2,1].axis('off')
+
 
 	plt.tight_layout()
 	plt.show()
@@ -375,34 +294,32 @@ def plotPCAFFTs(trainSamples) :
 	nSamples = len(trainSamples)
 	assert nSamples > 1
 	nSignals = len(trainSamples[0])
+	if nSignals >= 12 :
+		nSignals = 12
 	assert nSignals >= 1 
 
 	if nSignals <= 2 :
 		f,axarr = plt.subplots(2)
 	else :		
-		f,axarr = plt.subplots(int(nSignals/2) + nSignals % 2 + 1,2)
+		f,axarr = plt.subplots(int(nSignals/2) + nSignals % 2,2)
 
 	N = nSamples
-	i = 0
-	#print nSignals
-	while i < nSignals :
+	for i in xrange(0,nSignals):
 
 		subplotX = int(i/2)
 		subplotY = i % 2
-
 		signal = np.array(map(itemgetter(i),trainSamples))
 
-		xf,fftVal = getFFT(signal,1000)
+		xf,fftVal = getFFT(signal,1)
 		if nSignals <= 2 :
-			axarr[subplotY].semilogy(xf[1:N/2], 2.0/N * np.abs(fftVal[1:N/2] + 1), '-r')
+			axarr[subplotY].plot(xf[1:N/2], 2.0/N * np.abs(fftVal[1:N/2]), '-r')
 			axarr[subplotY].set_title("FFT - Signal No : " + str(i + 1))
 			axarr[subplotY].grid(True)
 		else :
-			axarr[subplotX,subplotY].semilogy(xf[1:N/2], 2.0/N * np.abs(fftVal[1:N/2] + 1), '-r')
+			axarr[subplotX,subplotY].plot(xf[1:N/2], 2.0/N * np.abs(fftVal[1:N/2]), '-r')
 			axarr[subplotX,subplotY].set_title("FFT - Signal No : " + str(i + 1))
 			axarr[subplotX,subplotY].grid(True)
 
-		i = i + 1
 
 	plt.tight_layout()
 	plt.show()
@@ -420,17 +337,16 @@ def extractOptPCADimensionality(trainSamples) :
 
 	percentageExplainedVariance = []
 	nComponents = []
-
 	pSum  = 0.0
 	nComponents99 = -1
-	i = 0
-	while i < nFeatures :
+
+	for i in xrange(0,nFeatures) :
 		pSum = pSum + pca.explained_variance_ratio_[i]
-		if pSum >= 0.999 and nComponents99 == -1 :
+		if pSum >= 0.99 and nComponents99 == -1 :
 			nComponents99 = i + 1
 		nComponents.append(i+1)
 		percentageExplainedVariance.append(pSum*100.0)
-		i = i + 1
+
 
 	#plt.plot(nComponents,percentageExplainedVariance)
 	#plt.title("Percentage of Explained Variance vs number of Dimensions (in PCA)")
@@ -442,21 +358,109 @@ def extractOptPCADimensionality(trainSamples) :
 
 	assert nComponents99 != -1
 	return nComponents99
+
+def normalize(timeSeries,nfFactor) :
+
+	if isinstance(timeSeries[0],(int,float)) == True :
+		nFeatures = 1
+	else :
+		nFeatures = len(timeSeries[0])
+
+	assert len(nfFactor) == nFeatures
+	nSamples = len(timeSeries)
+	normalizedTimeSeries = []
+
+	for i in xrange(0,nFeatures) :
+		if nfFactor[i] == 0.0 :
+			nfFactor[i] = 1.0
+
+	for i in xrange(0,nSamples):
+		if isinstance(timeSeries[0],(int,float)) == True :
+			normalizedTimeSeries.append(float(timeSeries[i])/float(nfFactor[0]))
+		else :
+			normalizedTimeSeries.append(map(truediv,timeSeries[i],nfFactor))
+
+
+	return np.array(normalizedTimeSeries)
+
+
+def standardize(timeSeries,musigmaEstimates=None) :
+
+	if musigmaEstimates == None :
+		toEstimate = True
+	else :
+		toEstimate = False
+
+
+
+	nSamples = len(timeSeries)
+	assert nSamples >= 2
+	
+
+
+	if isinstance(timeSeries[0],(int,float)) == True :
+		nFeatures = 1
+		if toEstimate == True :
+			mu = mean(timeSeries)
+			sigma = stdev(timeSeries)
+		else :
+			mu = musigmaEstimates[0]
+			sigma = musigmaEstimates[1]
+	else :
+		nFeatures = len(timeSeries[0])
+		if toEstimate == True :
+			mu = []
+			sigma = []
+			for i in xrange(0,nFeatures) :
+				signal = np.array(map(itemgetter(i),timeSeries))
+				mu.append(mean(signal))
+				sigma.append(stdev(signal))
+		else :
+			mu = musigmaEstimates[0]
+			sigma = musigmaEstimates[1]
+
+
+	assert mu != None
+	assert sigma != None
+
+	standardizedTimeSeries = []
+
+	for i in xrange(0,nSamples):
+		if isinstance(timeSeries[0],(int,float)) == True :
+			if sigma == 0.0 :
+				print "The only signal available is a constant. Any variation can be detected as anomaly. Exiting."
+				sys.exit(0)
+			else :
+				standardizedTimeSeries.append(float(timeSeries[i] - float(mu))/float(sigma))
+
+		else :
+			standardizedInput = []
+			nNonConstants = 0
+
+			for j in xrange(0,nFeatures):
+				if sigma[j] != 0.0 :
+					standardizedInput.append(float(timeSeries[i][j] - float(mu[j]))/float(sigma[j]))
+					nNonConstants = nNonConstants + 1
+				else :
+					standardizedInput.append(float(timeSeries[i][j] - 0.0)/float(1.0))
+		
+			if nNonConstants == 0 :
+				print "All available signals available are constant. Any variation can be detected as anomaly. Exiting."
+				sys.exit(0)
+			else :
+				standardizedTimeSeries.append(standardizedInput)
+
+
+	return np.array(standardizedTimeSeries),(mu,sigma)
+				
+	
+
+
+	
+
 	
 
 if __name__ == "__main__" :
-
-
-
-	np.random.seed(123456)
-
-	sysPeriod = 1
-	nMaxPeriods = 10
-	maxMixtures = 1
-	covType = 'diag'
-	probThreshold = 80
-	testPCA = False
-	scriptDir = os.path.dirname(os.path.realpath(__file__))
 
 
 	trainCommandFile = scriptDir + '/DataSets/Command_Injection/AddressScanScrubbedV2.csv'
@@ -467,6 +471,7 @@ if __name__ == "__main__" :
 	fastburstResponseFile = scriptDir + '/DataSets/Response_Injection/ScrubbedFastV2/scrubbedFastV2.csv'
 	slowburstResponseFile = scriptDir + '/DataSets/Response_Injection/ScrubbedSlowV2/scrubbedSlowV2.csv'
 	
+	np.random.seed(123456)
 	assert os.path.isfile(trainCommandFile)
 	assert os.path.isfile(trainResponseFile)
 	assert os.path.isfile(dosAttackDataFile)
@@ -475,20 +480,12 @@ if __name__ == "__main__" :
 	assert os.path.isfile(fastburstResponseFile)
 	assert os.path.isfile(slowburstResponseFile)
 	
-	#trainSamples = readTrainSamplesSystemData(commandFile,responseFile)
 	print "Reading Train and Test Samples ..."
 	traincharacteristics,timeSeries = readTrainSamplesNetworkData(trainCommandFile,trainResponseFile,1,1000,28071)
-
-	
-
-	#plotInterestingFFTs(traincharacteristics)
-	#sys.exit(0)
-
 	print "Reading DoS Data ..."	
 	characteristics,dosAttackData = readTestSamplesNetworkData(dosAttackDataFile,28072,1000)
 	print "Reading Function Code Scan Data ..."
 	characteristics,functionScanData = readTestSamplesNetworkData(functionScanDataFile,28088,1000)
-	#print functionScanData
 	print "Reading burst response .."
 	characteristics,burstResponseData = readTestSamplesNetworkData(burstResponseFile,28072,1000)
 	print "Reading fast burst ..."
@@ -497,22 +494,91 @@ if __name__ == "__main__" :
 	characteristics,slowburstResponseData = readTestSamplesNetworkData(slowburstResponseFile,28072,1000)
 
 
+	#extract maximum feature values from train Samples for normalization
+	nSamples = len(timeSeries)
+
+	"""
+	timeSeries = []
+	i = 0
+	while i < nSamples :
+		timeSeries.append([np.sin(0.2*2.0*np.pi*i),np.cos(0.2*2.0*np.pi*i)])
+		i = i + 1
+
+	"""
+
+	print "Normalizing samples ..."
+	timeSeries = np.array(timeSeries)
+	nFeatures = len(timeSeries[0])
+	featureMax = []
+	i = 0	
+	while i < nFeatures :
+		maxVal = max(np.array(map(itemgetter(i), timeSeries)),key=abs) 
+		if maxVal == 0:
+			maxVal = 1
+		featureMax.append(maxVal)
+		i = i + 1
+	
+	timeSeries = normalize(timeSeries,featureMax)
+	dosAttackData = normalize(dosAttackData,featureMax)
+	functionScanData = normalize(functionScanData,featureMax)
+	burstResponseData = normalize(burstResponseData,featureMax)
+	fastburstResponseData = normalize(fastburstResponseData,featureMax)
+	slowburstResponseData = normalize(slowburstResponseData,featureMax)	
+	
+	
+	#standardize all samples
+	print "Standardizing samples ..."
+
+	
+	timeSeries,musigma = standardize(timeSeries)
+	dosAttackData,tmp = standardize(dosAttackData,musigma)
+	functionScanData,tmp = standardize(functionScanData,musigma)
+	burstResponseData,tmp = standardize(burstResponseData,musigma)
+	fastburstResponseData,tmp = standardize(fastburstResponseData,musigma)
+	slowburstResponseData,tmp = standardize(slowburstResponseData,musigma)
+	
+	print "nSamples = ", nSamples, " nDimesions = ", len(timeSeries[0])
+	
+	
+
+
 	#dimReduced data
 	if testPCA == True :
 
 		optDimensionality = extractOptPCADimensionality(timeSeries)
-		print "optDimensionality = ", optDimensionality
+		print "PCA optDimensionality = ", optDimensionality
 		pca = PCA(n_components=optDimensionality)
 		pca.fit(timeSeries)
+		#timeSeries,msigma = standardize(pca.transform(timeSeries))
+		#dosAttackData,tmp = standardize(pca.transform(dosAttackData),msigma)
+		#functionScanData,tmp = standardize(pca.transform(functionScanData),msigma)
+		#burstResponseData,tmp = standardize(pca.transform(burstResponseData),msigma)
+		#fastburstResponseData,tmp = standardize(pca.transform(fastburstResponseData),msigma)
+		#slowburstResponseData,tmp = standardize(pca.transform(slowburstResponseData),msigma)
 		timeSeries = pca.transform(timeSeries)
-		#plotPCAFFTs(timeSeries)
-		#sys.exit(0)
 		dosAttackData = pca.transform(dosAttackData)
 		functionScanData = pca.transform(functionScanData)
 		burstResponseData = pca.transform(burstResponseData)
 		fastburstResponseData = pca.transform(fastburstResponseData)
-		slowburstResponseData = pca.transform(slowburstResponseData)	
+		slowburstResponseData = pca.transform(slowburstResponseData)
 		
+
+
+
+	for i in xrange(0,len(timeSeries[0])) :
+		print "new mu[",i,"] = ", mean(np.array(map(itemgetter(i),timeSeries)))
+		print "new sigma[",i,"] = ", stdev(np.array(map(itemgetter(i),timeSeries)))
+	#plotPCAFFTs(timeSeries)
+	#plotSignal(np.array(map(itemgetter(0),timeSeries)),5*windowSize)
+	#plotSignal(np.array(map(itemgetter(1),timeSeries)),5*windowSize)
+	#plotSignal(np.array(map(itemgetter(2),timeSeries)),5*windowSize)
+	#plotSignal(np.array(map(itemgetter(3),timeSeries)),5*windowSize)
+	#plotSignal(np.array(map(itemgetter(4),timeSeries)),5*windowSize)
+
+	#sys.exit(0)
+	#plotInterestingFFTs(traincharacteristics)
+	#sys.exit(0)
+
 
 	trainMeans = []
 	trainErrs = []
@@ -534,12 +600,17 @@ if __name__ == "__main__" :
 		sysPeriod = start
 		period.append(sysPeriod)
 		print "Training HMM for SysPeriod = ",sysPeriod
-		observations, nS1Mixtures = trainGMMs(timeSeries,sysPeriod=sysPeriod,nMaxMixtures=maxMixtures,filterThreshold=probThreshold,cvType=covType)
-		Hmm = trainHMM(observations=observations,trainSamples=timeSeries,nMixtures=nS1Mixtures,nStages=sysPeriod,cvType=covType)
+
+		if testPCA == False :
+			covType = 'full'
+		else :
+			covType = 'diag' # pca decorrelates signals
+
+		observations, nOptMixtures = trainGMMs(timeSeries,sysPeriod=sysPeriod,nMaxMixtures=maxMixtures,cvType=covType)
+		Hmm = trainHMM(observations=observations,trainSamples=timeSeries,nMixtures=nOptMixtures,nStages=sysPeriod,cvType=covType)
+		
 
 		print "Scoring Samples ..."
-	
-		windowSize = 60
 		mu,err = scoreSamples(timeSeries,Hmm,windowSize)
 		trainMeans.append(mu)
 		trainErrs.append(err)
@@ -559,26 +630,31 @@ if __name__ == "__main__" :
 		sbRMeans.append(mu)
 		sbRErrs.append(err)
 
+
 		start =  start + 1
 		
 	
 
 	if nMaxPeriods > 1 :
 		trainLine = plt.errorbar(period,trainMeans,yerr=trainErrs,label="Train Samples",linestyle='--',marker="d",color="red")
+
+			
 		doSLine = plt.errorbar(period,doSMeans,yerr=doSErrs,label="DoS Attack",linestyle='-',marker="+",color="black")
 		fScanLine = plt.errorbar(period,fScanMeans,yerr=fScanErrs,label="Function Scan",linestyle='-.',marker="^",color="green")
 		bRLine = plt.errorbar(period,bRMeans,yerr=bRErrs,label="Burst Response",linestyle='-',marker="x", color="blue")
 		fbRLine = plt.errorbar(period,fbRMeans,yerr=fbRErrs,label="Fast Burst",linestyle='--',marker='*',color="m")
 		sbRLine = plt.errorbar(period,sbRMeans,yerr=sbRErrs,label="Slow Burst",linestyle='-',marker='o',color="green")
+		plt.yscale('symlog')
+		
+
 		plt.title("Log Likelihood Variation for Window Size = 60 sec")
 		plt.xlabel("Number of States")
 		plt.ylabel("HMM average log likelihood")
-		plt.xticks(np.arange(min(period), 15 , 1.0))
-		plt.yscale('symlog')
+		plt.xticks(np.arange(min(period), max(period) + 5 , 1.0))
+		
 		plt.legend(loc='upper right',shadow=True)
 		plt.grid(True)
 		plt.show()
 	
 
-	#plotSignal(sNetwork)
-	#plotFFT(sNetwork,1000)
+	
