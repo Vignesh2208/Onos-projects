@@ -15,11 +15,15 @@ from statistics import mean
 from statistics import stdev
 import math
 from sklearn.decomposition import PCA
+from autoperiod import *
+from statsmodels import tsa
+from statsmodels.tsa import stattools
+import statsmodels
 warnings.simplefilter("ignore", DeprecationWarning)
 
 
 
-nMaxPeriods = 20
+nMaxPeriods = 0
 maxMixtures = 1
 windowSize = 60
 testPCA = True
@@ -113,9 +117,9 @@ def scoreSamples(samples,hmm,windowSize) :
 		
 	scores.append(hmm.score(np.array(samples[i:])))
 	if len(scores) > 1 :
-		return mean(scores),(1.96*stdev(scores))/float(math.sqrt(len(scores)))
+		return mean(scores)/float(windowSize),(1.96*stdev(scores))/float(math.sqrt(len(scores)))
 	else :
-		return mean(scores),0.0
+		return mean(scores)/float(windowSize),0.0
 	
 
 def trainHMM(observations,trainSamples,nMixtures=1,nStages=1,cvType='diag') :
@@ -124,8 +128,8 @@ def trainHMM(observations,trainSamples,nMixtures=1,nStages=1,cvType='diag') :
 	assert nStates > 0
 	transmat = []
 	startProb = [float(1.0/nStates)]*nStates
-	#startProb = [0.0]*nStates
-	#startProb[0] = 1.0
+	startProb = [0.0]*nStates
+	startProb[0] = 1.0
 	
 	for j in xrange(0,nStates) :
 		transmat.append([0.0]*nStates)
@@ -221,7 +225,7 @@ def trainGMMs(trainSamples,sysPeriod=1,nMaxMixtures=10,cvType='full') :
 	nOptMixtures = max_BIC_List.index(min(max_BIC_List)) + 1
 	
 	#print "Max BICs For Samples w.r.t nMixtures = ", max_BIC_List
-	print "Optimum number of Mixtures = ", nOptMixtures
+	#print "Optimum number of Mixtures = ", nOptMixtures, " min_max_BIC_list = ", max_BIC_List
 
 	assert nOptMixtures <= nMaxMixtures
 	return observations, nOptMixtures
@@ -501,13 +505,28 @@ if __name__ == "__main__" :
 	timeSeries = []
 	i = 0
 	while i < nSamples :
-		timeSeries.append([np.sin(0.2*2.0*np.pi*i),np.cos(0.2*2.0*np.pi*i)])
+		timeSeries.append([np.sin(0.1*2.0*np.pi*i),np.cos(0.2*2.0*np.pi*i)])
 		i = i + 1
+	
+	timeSeries = np.array(timeSeries)
+	"""
+	
 
 	"""
+	#standardize all samples
+	print "Standardizing samples ..."
 
+
+	timeSeries,musigma = standardize(timeSeries)
+	dosAttackData,tmp = standardize(dosAttackData,musigma)
+	functionScanData,tmp = standardize(functionScanData,musigma)
+	burstResponseData,tmp = standardize(burstResponseData,musigma)
+	fastburstResponseData,tmp = standardize(fastburstResponseData,musigma)
+	slowburstResponseData,tmp = standardize(slowburstResponseData,musigma)
+	"""
+
+	print "nSamples = ", nSamples, " n Signals = ", len(timeSeries[0])
 	print "Normalizing samples ..."
-	timeSeries = np.array(timeSeries)
 	nFeatures = len(timeSeries[0])
 	featureMax = []
 	i = 0	
@@ -524,50 +543,50 @@ if __name__ == "__main__" :
 	burstResponseData = normalize(burstResponseData,featureMax)
 	fastburstResponseData = normalize(fastburstResponseData,featureMax)
 	slowburstResponseData = normalize(slowburstResponseData,featureMax)	
-	
-	
-	#standardize all samples
-	print "Standardizing samples ..."
 
 	
-	timeSeries,musigma = standardize(timeSeries)
-	dosAttackData,tmp = standardize(dosAttackData,musigma)
-	functionScanData,tmp = standardize(functionScanData,musigma)
-	burstResponseData,tmp = standardize(burstResponseData,musigma)
-	fastburstResponseData,tmp = standardize(fastburstResponseData,musigma)
-	slowburstResponseData,tmp = standardize(slowburstResponseData,musigma)
-	
-	print "nSamples = ", nSamples, " nDimesions = ", len(timeSeries[0])
-	
-	
-
-
-	#dimReduced data
+	#dimensionality Reduction with PCA
 	if testPCA == True :
 
 		optDimensionality = extractOptPCADimensionality(timeSeries)
-		print "PCA optDimensionality = ", optDimensionality
+		print "PCA 99 percentile optDimensionality = ", optDimensionality
 		pca = PCA(n_components=optDimensionality)
 		pca.fit(timeSeries)
-		#timeSeries,msigma = standardize(pca.transform(timeSeries))
-		#dosAttackData,tmp = standardize(pca.transform(dosAttackData),msigma)
-		#functionScanData,tmp = standardize(pca.transform(functionScanData),msigma)
-		#burstResponseData,tmp = standardize(pca.transform(burstResponseData),msigma)
-		#fastburstResponseData,tmp = standardize(pca.transform(fastburstResponseData),msigma)
-		#slowburstResponseData,tmp = standardize(pca.transform(slowburstResponseData),msigma)
 		timeSeries = pca.transform(timeSeries)
 		dosAttackData = pca.transform(dosAttackData)
 		functionScanData = pca.transform(functionScanData)
 		burstResponseData = pca.transform(burstResponseData)
 		fastburstResponseData = pca.transform(fastburstResponseData)
 		slowburstResponseData = pca.transform(slowburstResponseData)
-		
 
 
+	nSignals = len(timeSeries[0])
+	nSignals = 1
+	nLags = 50
+	for i in xrange(0,nSignals) :
+		print "Extracting candidate periods for signal ", i, " ..."
+		candidatePeriods,pThreshold = getPeriodHints(X=np.array(map(itemgetter(i),timeSeries)),fs=1.0)
+		print "Candidate Periods = ", candidatePeriods
+		print "pThreshold = ",pThreshold
 
-	for i in xrange(0,len(timeSeries[0])) :
-		print "new mu[",i,"] = ", mean(np.array(map(itemgetter(i),timeSeries)))
-		print "new sigma[",i,"] = ", stdev(np.array(map(itemgetter(i),timeSeries)))
+		print "Estimating Acf for signal ", i , " ..."
+		#acf = statsmodels.tsa.stattools.acf(x=np.array(map(itemgetter(i),timeSeries)),nlags=nLags,fft=True)
+		acf = stattools.acf(x=np.array(map(itemgetter(i),timeSeries)),nlags=nLags,fft=True)
+
+		plt.plot(acf)
+		plt.title("ACF for Signal " + str(i))
+		plt.xlabel("Lags")
+		plt.ylabel("Auto Correlation")
+		plt.xticks(np.arange(0, nLags + 5 , int(nLags/20)))
+		plt.show()
+	
+
+
+	#for i in xrange(0,len(timeSeries[0])) :
+	#	print "new mu[",i,"] = ", mean(np.array(map(itemgetter(i),timeSeries)))
+	#	print "new sigma[",i,"] = ", stdev(np.array(map(itemgetter(i),timeSeries)))
+	
+
 	#plotPCAFFTs(timeSeries)
 	#plotSignal(np.array(map(itemgetter(0),timeSeries)),5*windowSize)
 	#plotSignal(np.array(map(itemgetter(1),timeSeries)),5*windowSize)
@@ -596,7 +615,7 @@ if __name__ == "__main__" :
 	
 	start = 1
 	period = []
-	while start < nMaxPeriods + 1 :
+	while start < nMaxPeriods + 1:
 		sysPeriod = start
 		period.append(sysPeriod)
 		print "Training HMM for SysPeriod = ",sysPeriod
@@ -608,12 +627,14 @@ if __name__ == "__main__" :
 
 		observations, nOptMixtures = trainGMMs(timeSeries,sysPeriod=sysPeriod,nMaxMixtures=maxMixtures,cvType=covType)
 		Hmm = trainHMM(observations=observations,trainSamples=timeSeries,nMixtures=nOptMixtures,nStages=sysPeriod,cvType=covType)
-		
-
+				
+		windowSize = sysPeriod
 		print "Scoring Samples ..."
 		mu,err = scoreSamples(timeSeries,Hmm,windowSize)
 		trainMeans.append(mu)
 		trainErrs.append(err)
+	
+		#print "BIC HMM = ", -2*Hmm.score(np.array(timeSeries)) + sysPeriod*(math.log(nSamples))
 		mu,err = scoreSamples(dosAttackData,Hmm,windowSize)
 		doSMeans.append(mu)
 		doSErrs.append(err)
@@ -629,7 +650,7 @@ if __name__ == "__main__" :
 		mu,err = scoreSamples(slowburstResponseData,Hmm,windowSize)
 		sbRMeans.append(mu)
 		sbRErrs.append(err)
-
+		
 
 		start =  start + 1
 		
@@ -638,14 +659,14 @@ if __name__ == "__main__" :
 	if nMaxPeriods > 1 :
 		trainLine = plt.errorbar(period,trainMeans,yerr=trainErrs,label="Train Samples",linestyle='--',marker="d",color="red")
 
-			
+		"""	
 		doSLine = plt.errorbar(period,doSMeans,yerr=doSErrs,label="DoS Attack",linestyle='-',marker="+",color="black")
 		fScanLine = plt.errorbar(period,fScanMeans,yerr=fScanErrs,label="Function Scan",linestyle='-.',marker="^",color="green")
 		bRLine = plt.errorbar(period,bRMeans,yerr=bRErrs,label="Burst Response",linestyle='-',marker="x", color="blue")
 		fbRLine = plt.errorbar(period,fbRMeans,yerr=fbRErrs,label="Fast Burst",linestyle='--',marker='*',color="m")
 		sbRLine = plt.errorbar(period,sbRMeans,yerr=sbRErrs,label="Slow Burst",linestyle='-',marker='o',color="green")
 		plt.yscale('symlog')
-		
+		"""
 
 		plt.title("Log Likelihood Variation for Window Size = 60 sec")
 		plt.xlabel("Number of States")

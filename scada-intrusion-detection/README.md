@@ -4,6 +4,9 @@
  - python
  - hmmlearn (0.2.1)
  - numpy (>=1.11)
+ - Cython 
+ - pandas
+ - statsmodels
  - scipy
  - matplotlib
 
