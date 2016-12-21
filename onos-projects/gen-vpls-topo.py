@@ -21,7 +21,7 @@ import urllib
 # controllerPort=40002
 # networkCfgPort=40001
 
-controllerIP = '172.17.0.88'
+controllerIP = '172.17.0.93'
 controllerPort = 6653
 networkCfgPort = 8181
 
@@ -35,10 +35,7 @@ nGrids = 1
 nSwitchesPerGrid = 3  # >= 2
 nHostsPerSwitch = 3
 controlVlanId = 255
-controlVlanTCPSource = 100
-controlVlanTCPDest = 100
-
-
+controlVlanTCPDest = 20000
 
 
 class VLANHost(Host):
@@ -83,7 +80,7 @@ class VLANHost(Host):
         self.vlanInterfaceNames.append(vlanIntfName)
 
 
-def push_network_cfg(switch_port_mapping):
+def push_network_cfg_ports_conf(switch_port_mapping):
 
     net_conf_dict = {}
     ports_conf = {}
@@ -102,17 +99,12 @@ def push_network_cfg(switch_port_mapping):
 
                 vpls_dict["vpls" + str(port_intf_tuple[1])].append(port_intf_tuple[0])
 
-                port_value["interfaces"].append({"name":port_intf_tuple[0],
+                port_value["interfaces"].append({"name": port_intf_tuple[0],
                                                  "vlan": port_intf_tuple[1]})
 
             ports_conf[port_name] = port_value
 
-    vpls_list = []
-    for vpls_name in vpls_dict:
-        this_vpls = {"name": vpls_name, "interfaces": vpls_dict[vpls_name]}
-        vpls_list.append(this_vpls)
-
-    net_conf_dict = {"ports": ports_conf, "apps": {"org.onosproject.vpls": {"vpls": {"vplsList": vpls_list}}}}
+    net_conf_dict = {"ports": ports_conf}
 
     network_cfg_url = baseURL + "network/configuration/"
 
@@ -120,11 +112,31 @@ def push_network_cfg(switch_port_mapping):
                                            headers={'Content-type': 'application/json; charset=UTF-8'},
                                            body=json.dumps(net_conf_dict))
 
-    print resp
-    print content
+    return vpls_dict
 
+
+def push_network_cfg_vpls_conf(vpls_dict):
+    net_conf_dict = {}
+
+    vpls_list = []
+    for vpls_name in vpls_dict:
+        this_vpls = {"name": vpls_name, "interfaces": vpls_dict[vpls_name]}
+        vpls_list.append(this_vpls)
+
+    net_conf_dict = {"apps": {"org.onosproject.vpls": {"vpls": {"vplsList": vpls_list}}}}
+
+    network_cfg_url = baseURL + "network/configuration/"
+
+    resp, content = requestHandler.request(network_cfg_url, "POST",
+                                           headers={'Content-type': 'application/json; charset=UTF-8'},
+                                           body=json.dumps(net_conf_dict))
 
 def runTopology(topoConfigFile):
+
+    os.system("sudo mn -c")
+
+    push_network_cfg_vpls_conf({})
+
     net = Mininet(autoSetMacs=True)
     c1 = net.addController('c1', controller=RemoteController, ip=controllerIP, port=controllerPort)
 
@@ -144,7 +156,6 @@ def runTopology(topoConfigFile):
 
     switchList = sorted(list(SwitchObjs.keys()))
     hostNodeList = sorted(list(HostNodes.keys()))
-
 
     print "*** Adding Hosts"
 
@@ -177,16 +188,7 @@ def runTopology(topoConfigFile):
 
     #generate and push onos Network Cfg
 
-    # scriptDir = os.path.dirname(os.path.realpath(__file__))
-    # readTopoConfiguration.generateNetworkCfg(scriptDir + "/network-cfg.json", SwitchPortVlanMapping)
-    # cmd = "curl --user karaf:karaf -X POST -H \"Content-Type: application/json\" http://" + str(
-    #     controllerIP) + ":" + str(networkCfgPort) + "/onos/v1/network/configuration/ -d" + "@" + str(
-    #     scriptDir) + "/network-cfg.json"
-    # print cmd
-    # os.system(cmd)
-
-    push_network_cfg(SwitchPortVlanMapping)
-
+    vpls_dict = push_network_cfg_ports_conf(SwitchPortVlanMapping)
 
     print "*** Starting network"
     net.build()
@@ -212,6 +214,8 @@ def runTopology(topoConfigFile):
         switch.start([c1])
 
     pingHosts(HostObjs)
+
+    push_network_cfg_vpls_conf(vpls_dict)
     #installControlVlanFlows()
 
     print "*** Running CLI"
@@ -233,7 +237,6 @@ def installControlVlanFlows():
     resp, content = requestHandler.request(getFlowsUrl, "GET")
 
     vplsFlows = json.loads(content)
-    # print "vplsFlows = ",vplsFlows
 
     for flow in vplsFlows['flows']:
         deleteFlowUrl = baseURL + "flows/" + urllib.quote(flow["deviceId"]) + "/" + flow["id"]
@@ -245,10 +248,6 @@ def installControlVlanFlows():
             if criteria["type"] == "VLAN_VID":
                 vlanId = criteria["vlanId"]
                 if vlanId == controlVlanId:
-                    newTCPSrcCriteria = {}
-                    newTCPSrcCriteria["type"] = "TCP_SRC"
-                    newTCPSrcCriteria["tcpPort"] = controlVlanTCPSource
-                    flowCriteria.append(newTCPSrcCriteria)
 
                     newTCPDestCriteria = {}
                     newTCPDestCriteria["type"] = "TCP_DST"
