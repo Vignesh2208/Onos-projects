@@ -27,15 +27,14 @@ def isHost(label):
 
 
 def getOnosSwitchId(label):
-    switchId = str(label[1:])
-    while len(switchId) < 16:
-        switchId = "0" + switchId
 
-    return switchId
+    switch_num = int(label[1:])
+    switchId = (hex(switch_num)[2:]).zfill(16)
+    return switchId.zfill(16)
 
 
 def getSwitchName(onosSwitchId):
-    return "s" + str(int(onosSwitchId))
+    return "s" + str(int(onosSwitchId, 16))
 
 
 def getHostId(label):
