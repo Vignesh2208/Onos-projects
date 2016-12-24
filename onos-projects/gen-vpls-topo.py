@@ -256,22 +256,24 @@ def installControlVlanFlows(controlVlanId, controlVlanTCPDest):
 def pingEnclaveHostPairs(HostObjs, hostIds, vlanId):
     assert vlanId <= 256
     for i in xrange(len(hostIds)):
-        for j in xrange(len(hostIds)):
+        # for j in xrange(len(hostIds)):
+        #
+        #     if i != j:
+        #         continue
 
-            if i == j:
-                continue
+        j = (i + 1) % len(hostIds)
 
-            srcHostName = "h" + str(hostIds[i])
-            dstHostName = "h" + str(hostIds[j])
-            assert srcHostName in HostObjs.keys()
-            assert dstHostName in HostObjs.keys()
+        srcHostName = "h" + str(hostIds[i])
+        dstHostName = "h" + str(hostIds[j])
+        assert srcHostName in HostObjs.keys()
+        assert dstHostName in HostObjs.keys()
 
-            dstHostIp = "10." + str(vlanId) + ".0." + str(hostIds[j])
-            srcHostInterface = srcHostName + "-eth0." + str(vlanId)
-            srcHost = HostObjs[srcHostName]
-            dstHost = HostObjs[dstHostName]
-            pingCmd = "ping -c 1 -I " + srcHostInterface + " " + dstHostIp
-            srcHost.cmd(pingCmd)
+        dstHostIp = "10." + str(vlanId) + ".0." + str(hostIds[j])
+        srcHostInterface = srcHostName + "-eth0." + str(vlanId)
+        srcHost = HostObjs[srcHostName]
+        dstHost = HostObjs[dstHostName]
+        pingCmd = "ping -c 1 -I " + srcHostInterface + " " + dstHostIp
+        srcHost.cmd(pingCmd)
 
 
 def pingHosts(HostObjs, nGrids, nSwitchesPerGrid, nHostsPerSwitch):
@@ -426,7 +428,7 @@ if __name__ == '__main__':
 
     nGrids = 2
     nSwitchesPerGrid = 3  # >= 2
-    nHostsPerSwitch = 3
+    nHostsPerSwitch = 3 # >= 2
     controlVlanId = 255
     controlVlanTCPDest = 20000
 
