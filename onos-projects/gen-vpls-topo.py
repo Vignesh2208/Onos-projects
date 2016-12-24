@@ -11,7 +11,7 @@ import httplib2
 import json
 import urllib
 
-controllerIP = '172.17.0.110'
+controllerIP = '172.17.0.123'
 controllerPort = 6653
 networkCfgPort = 8181
 
@@ -255,9 +255,12 @@ def installControlVlanFlows(controlVlanId, controlVlanTCPDest):
 
 def pingEnclaveHostPairs(HostObjs, hostIds, vlanId):
     assert vlanId <= 256
-    nHosts = len(hostIds)
-    for i in xrange(0, nHosts):
-        for j in xrange(i + 1, nHosts):
+    for i in xrange(len(hostIds)):
+        for j in xrange(len(hostIds)):
+
+            if i == j:
+                continue
+
             srcHostName = "h" + str(hostIds[i])
             dstHostName = "h" + str(hostIds[j])
             assert srcHostName in HostObjs.keys()
