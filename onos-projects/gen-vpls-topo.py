@@ -1,23 +1,17 @@
 #!/usr/bin/env python
 
-from mininet.topo import Topo
 from mininet.cli import CLI
-from mininet.node import Link, Host
-from mininet.link import Intf, TCLink
+from mininet.node import Host
 from mininet.net import Mininet
-from mininet.node import RemoteController, OVSKernelSwitch
-from mininet.term import makeTerm
+from mininet.node import RemoteController
 
-from functools import partial
 from collections import defaultdict
-import os
-import readTopoConfiguration
 from readTopoConfiguration import *
 import httplib2
 import json
 import urllib
 
-controllerIP = '172.17.0.93'
+controllerIP = '172.17.0.110'
 controllerPort = 6653
 networkCfgPort = 8181
 
@@ -106,10 +100,14 @@ def push_network_cfg_ports_conf(switch_port_mapping):
 
 
 def push_network_cfg_vpls_conf(vpls_dict):
+
+    print "vpls_dict:", vpls_dict
+
     net_conf_dict = {}
 
     vpls_list = []
     for vpls_name in vpls_dict:
+
         this_vpls = {"name": vpls_name, "interfaces": vpls_dict[vpls_name]}
         vpls_list.append(this_vpls)
 
@@ -122,7 +120,10 @@ def push_network_cfg_vpls_conf(vpls_dict):
                                            body=json.dumps(net_conf_dict))
 
 
-def runTopology(topoConfigFile, nGrids, nSwitchesPerGrid, nHostsPerSwitch):
+def runTopology(topo_tuples_list, nGrids, nSwitchesPerGrid, nHostsPerSwitch):
+
+    print "*** Reading Topology Config"
+    HostNodes, SwitchPortVlanMapping, SwitchConnections = parseTopoTuples(topo_tuples_list)
 
     os.system("sudo mn -c")
 
@@ -131,8 +132,6 @@ def runTopology(topoConfigFile, nGrids, nSwitchesPerGrid, nHostsPerSwitch):
     net = Mininet(autoSetMacs=True)
     c1 = net.addController('c1', controller=RemoteController, ip=controllerIP, port=controllerPort)
 
-    print "*** Reading Topology Config"
-    HostNodes, SwitchPortVlanMapping, SwitchConnections = parseTopoConfigFile(topoConfigFile)
     SwitchObjs = {}
     HostObjs = {}
 
@@ -221,7 +220,6 @@ def runTopology(topoConfigFile, nGrids, nSwitchesPerGrid, nHostsPerSwitch):
     c1.stop()
     net.stop()
 
-
 def installControlVlanFlows(controlVlanId, controlVlanTCPDest):
 
     getFlowsUrl = baseURL + "flows"
@@ -255,7 +253,7 @@ def installControlVlanFlows(controlVlanId, controlVlanTCPDest):
                                            body=updatedFlows)
 
 
-def pingAllHostPairs(HostObjs, hostIds, vlanId):
+def pingEnclaveHostPairs(HostObjs, hostIds, vlanId):
     assert vlanId <= 256
     nHosts = len(hostIds)
     for i in xrange(0, nHosts):
@@ -288,16 +286,17 @@ def pingHosts(HostObjs, nGrids, nSwitchesPerGrid, nHostsPerSwitch):
         switchId = int((i - 1) / nHostsPerSwitch) + 1
         enclaveVlanId = switchId
         print "Pinging hosts in enclave: ", enclaveVlanId
-        pingAllHostPairs(HostObjs, enclaveHosts, enclaveVlanId)
+        pingEnclaveHostPairs(HostObjs, enclaveHosts, enclaveVlanId)
         i = i + nHostsPerSwitch
 
     controlVlanHosts = range(1, controlHost + 1, nHostsPerSwitch)
     assert len(controlVlanHosts) == nSwitches + 1
     print "pinging control vlan hosts .."
-    pingAllHostPairs(HostObjs, controlVlanHosts, controlVlanId)
+    pingEnclaveHostPairs(HostObjs, controlVlanHosts, controlVlanId)
 
 
-def genUGridTopoConfig(topoConfigFile, nGrids, nSwitchesPerGrid, nHostsPerSwitch, controlVlanId):
+def genUGridTopoTuples(nGrids, nSwitchesPerGrid, nHostsPerSwitch, controlVlanId):
+
     nSwitches = nSwitchesPerGrid * nGrids
     nHosts = nSwitches * nHostsPerSwitch
     nHostsPerGrid = nSwitchesPerGrid * nHostsPerSwitch
@@ -305,90 +304,97 @@ def genUGridTopoConfig(topoConfigFile, nGrids, nSwitchesPerGrid, nHostsPerSwitch
     controlSwitch = nSwitches + 1
     controlHost = nHosts + 1
 
-    assert nHosts > 0
-    assert nSwitches > 0
+    topo_tuples_list = []
 
-    with open(topoConfigFile, "w") as f:
-        f.write("h" + str(controlHost) + "_1,s" + str(controlSwitch) + "," + str(controlVlanId) + "\n")
-        for i in xrange(1, nHosts + 1):
-            switchId = int((i - 1) / nHostsPerSwitch) + 1
-            uGridId = int((i - 1) / nHostsPerGrid) + 1
-            enclaveVlanId = switchId
-            if i % nHostsPerSwitch == 1:
-                f.write("h" + str(i) + "_1,s" + str(switchId) + "," + str(enclaveVlanId) + "\n")
-                f.write("h" + str(i) + "_2,s" + str(switchId) + "," + str(controlVlanId) + "\n")
-                if switchId <= uGridId * nSwitchesPerGrid - 1:
-                    f.write("s" + str(switchId) + ",s" + str(switchId + 1) + "\n")
-                elif switchId == uGridId * nSwitchesPerGrid:
-                    f.write("s" + str(switchId) + ",s" + str(controlSwitch) + "\n")
-                    f.write("s" + str(switchId) + ",s" + str((uGridId - 1) * nSwitchesPerGrid + 1) + "\n")
-            else:
-                f.write("h" + str(i) + "_1,s" + str(switchId) + "," + str(enclaveVlanId) + "\n")
+    topo_tuples_list.append(("h" + str(controlHost) + "_1",
+                             "s" + str(controlSwitch),
+                             str(controlVlanId)))
+
+    for i in xrange(1, nHosts + 1):
+        switchId = int((i - 1) / nHostsPerSwitch) + 1
+        uGridId = int((i - 1) / nHostsPerGrid) + 1
+        enclaveVlanId = switchId
+
+        if i % nHostsPerSwitch == 1:
+            topo_tuples_list.append(("h" + str(i) + "_1",
+                                     "s" + str(switchId),
+                                     str(enclaveVlanId)))
+
+            topo_tuples_list.append(("h" + str(i) + "_2",
+                                     "s" + str(switchId),
+                                     str(controlVlanId)))
+
+            if switchId <= uGridId * nSwitchesPerGrid - 1:
+                topo_tuples_list.append(("s" + str(switchId),
+                                         "s" + str(switchId + 1)))
+
+            elif switchId == uGridId * nSwitchesPerGrid:
+                topo_tuples_list.append(("s" + str(switchId),
+                                         "s" + str(controlSwitch)))
+
+                topo_tuples_list.append(("s" + str(switchId),
+                                         "s" + str((uGridId - 1) * nSwitchesPerGrid + 1)))
+        else:
+            topo_tuples_list.append(("h" + str(i) + "_1",
+                                     "s" + str(switchId),
+                                     str(enclaveVlanId)))
+
+    return topo_tuples_list
 
 
-def parseTopoConfigFile(configFileName):
-    lines = [line.rstrip('\n') for line in open(configFileName)]
-
-    line_no = 0
+def parseTopoTuples(topo_tuples_list):
     Nodes = {}
-
     SwitchPortVlanMapping = {}
     SwitchConnections = []
-    for line in lines:
-        line_no = line_no + 1
-        if not line.startswith('#'):
-            fieldsList = line.split(',')
-            if len(fieldsList) != 2 and len(fieldsList) != 3:
+    for fieldsList in topo_tuples_list:
+
+        if len(fieldsList) != 2 and len(fieldsList) != 3:
+            continue
+
+        srcId = fieldsList[0]
+        dstId = fieldsList[1]
+
+        if srcId.startswith('s') and dstId.startswith('s'):
+            SwitchConnections.append((srcId, dstId))
+        else:
+            try:
+                vlanId = int(fieldsList[2])
+            except:
                 pass
-            else:
-                srcId = fieldsList[0]
-                dstId = fieldsList[1]
-                checkLabelFormat(srcId, line_no)
-                checkLabelFormat(dstId, line_no)
 
-                if srcId.startswith('s') and dstId.startswith('s'):
-                    SwitchConnections.append((srcId, dstId))
-                elif srcId.startswith('h') and dstId.startswith('h'):
-                    throwERROR("Hosts cannot be directly connected together. Line no : " + str(line_no))
-                else:
-                    try:
-                        vlanId = int(fieldsList[2])
-                    except:
-                        throwERROR("Unable to parse vlanId at line: " + str(line_no))
+            if isHost(srcId):
+                intf = getInterface(srcId)
+                srcId = getHostId(srcId)
+                if srcId not in Nodes.keys():
+                    Nodes[srcId] = {}
+                    Nodes[srcId]['vlan'] = {}
+                    Nodes[srcId]['nIntfs'] = 0
 
-                    if isHost(srcId):
-                        intf = getInterface(srcId)
-                        srcId = getHostId(srcId)
-                        if srcId not in Nodes.keys():
-                            Nodes[srcId] = {}
-                            Nodes[srcId]['vlan'] = {}
-                            Nodes[srcId]['nIntfs'] = 0
+            elif srcId not in SwitchPortVlanMapping.keys():
+                SwitchPortVlanMapping[getOnosSwitchId(srcId)] = {}
+                SwitchPortVlanMapping[getOnosSwitchId(srcId)]['nPorts'] = 0
 
-                    elif srcId not in SwitchPortVlanMapping.keys():
-                        SwitchPortVlanMapping[getOnosSwitchId(srcId)] = {}
-                        SwitchPortVlanMapping[getOnosSwitchId(srcId)]['nPorts'] = 0
+            if isHost(dstId):
+                intf = getInterface(srcId)
+                dstId = getHostId(dstId)
+                if dstId not in Nodes.keys():
+                    Nodes[dstId] = {}
+                    Nodes[dstId]['vlan'] = {}
+                    Nodes[dstId]['nIntfs'] = 0
 
-                    if isHost(dstId):
-                        intf = getInterface(srcId)
-                        dstId = getHostId(dstId)
-                        if dstId not in Nodes.keys():
-                            Nodes[dstId] = {}
-                            Nodes[dstId]['vlan'] = {}
-                            Nodes[dstId]['nIntfs'] = 0
+            elif dstId not in SwitchPortVlanMapping.keys():
+                SwitchPortVlanMapping[getOnosSwitchId(dstId)] = {}
+                SwitchPortVlanMapping[getOnosSwitchId(dstId)]['nPorts'] = 0
 
-                    elif dstId not in SwitchPortVlanMapping.keys():
-                        SwitchPortVlanMapping[getOnosSwitchId(dstId)] = {}
-                        SwitchPortVlanMapping[getOnosSwitchId(dstId)]['nPorts'] = 0
+            if isHost(srcId):
+                Nodes[srcId]['nIntfs'] = Nodes[srcId]['nIntfs'] + 1
+                Nodes[srcId]['vlan'][intf] = vlanId
+                Nodes[srcId]['switch'] = dstId
 
-                    if isHost(srcId):
-                        Nodes[srcId]['nIntfs'] = Nodes[srcId]['nIntfs'] + 1
-                        Nodes[srcId]['vlan'][intf] = vlanId
-                        Nodes[srcId]['switch'] = dstId
-
-                    if isHost(dstId):
-                        Nodes[dstId]['nIntfs'] = Nodes[dstId]['nIntfs'] + 1
-                        Nodes[dstId]['vlan'][intf] = vlanId
-                        Nodes[dstId]['switch'] = srcId
+            if isHost(dstId):
+                Nodes[dstId]['nIntfs'] = Nodes[dstId]['nIntfs'] + 1
+                Nodes[dstId]['vlan'][intf] = vlanId
+                Nodes[dstId]['switch'] = srcId
 
     nodeList = sorted(Nodes.keys())
     for node in nodeList:
@@ -409,17 +415,17 @@ def parseTopoConfigFile(configFileName):
             vlanId = Nodes[node]['vlan'][i]
             intfName = node + "-eth0." + str(vlanId)
             SwitchPortVlanMapping[connectedSwitch][portNo].append((intfName, vlanId))
-            i = i + 1
+            i += 1
 
-    return (Nodes, SwitchPortVlanMapping, SwitchConnections)
+    return Nodes, SwitchPortVlanMapping, SwitchConnections
 
 if __name__ == '__main__':
 
-    nGrids = 1
+    nGrids = 2
     nSwitchesPerGrid = 3  # >= 2
     nHostsPerSwitch = 3
     controlVlanId = 255
     controlVlanTCPDest = 20000
 
-    genUGridTopoConfig("topology-configuration.txt", nGrids, nSwitchesPerGrid, nHostsPerSwitch, controlVlanId)
-    runTopology("topology-configuration.txt", nGrids, nSwitchesPerGrid, nHostsPerSwitch)
+    topo_tuples_list = genUGridTopoTuples(nGrids, nSwitchesPerGrid, nHostsPerSwitch, controlVlanId)
+    runTopology(topo_tuples_list, nGrids, nSwitchesPerGrid, nHostsPerSwitch)
