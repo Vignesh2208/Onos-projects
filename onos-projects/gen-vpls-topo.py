@@ -11,7 +11,7 @@ import httplib2
 import json
 import urllib
 
-controllerIP = '172.17.0.128'
+controllerIP = '172.17.0.137'
 controllerPort = 6653
 networkCfgPort = 8181
 
@@ -137,15 +137,15 @@ def runTopology(topo_tuples_list, nGrids, nSwitchesPerGrid, nHostsPerSwitch):
 
     print "*** Adding Switches"
 
-    switchList = sorted(list(SwitchPortVlanMapping.keys()))
+    switchList = sorted(list(SwitchPortVlanMapping.keys()), key=lambda switch_number: int(switch_number[1:]))
     print "switchList = ", switchList
     for onosSwitchId in switchList:
         switchName = getSwitchName(onosSwitchId)
         switch = net.addSwitch(switchName)
         SwitchObjs[switchName] = switch
 
-    switchList = sorted(list(SwitchObjs.keys()))
-    hostNodeList = sorted(list(HostNodes.keys()))
+    switchList = sorted(list(SwitchObjs.keys()), key=lambda switch_number: int(switch_number[1:]))
+    hostNodeList = sorted(list(HostNodes.keys()), key=lambda host_number: int(host_number[1:]))
 
     print "*** Adding Hosts"
 
@@ -401,7 +401,8 @@ def parseTopoTuples(topo_tuples_list):
                 Nodes[dstId]['vlan'][intf] = vlanId
                 Nodes[dstId]['switch'] = srcId
 
-    nodeList = sorted(Nodes.keys())
+    nodeList = sorted(list(Nodes.keys()), key=lambda host_number: int(host_number[1:]))
+
     for node in nodeList:
         nIntfs = Nodes[node]['nIntfs']
         assert nIntfs > 0
@@ -418,6 +419,7 @@ def parseTopoTuples(topo_tuples_list):
                 throwERROR("Missing Interface " + str(i) + " for host " + str(node))
 
             vlanId = Nodes[node]['vlan'][i]
+
             intfName = node + "-eth0." + str(vlanId)
             SwitchPortVlanMapping[connectedSwitch][portNo].append((intfName, vlanId))
             i += 1
@@ -426,9 +428,9 @@ def parseTopoTuples(topo_tuples_list):
 
 if __name__ == '__main__':
 
-    nGrids = 3
+    nGrids = 1
     nSwitchesPerGrid = 3  # >= 2
-    nHostsPerSwitch = 3 # >= 2
+    nHostsPerSwitch = 4 # >= 2
     controlVlanId = 255
     controlVlanTCPDest = 20000
 
