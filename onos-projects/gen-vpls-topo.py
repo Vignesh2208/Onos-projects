@@ -11,7 +11,7 @@ import httplib2
 import json
 import urllib
 
-controllerIP = '172.17.0.137'
+controllerIP = '172.17.0.151'
 controllerPort = 6653
 networkCfgPort = 8181
 
@@ -137,14 +137,14 @@ def runTopology(topo_tuples_list, nGrids, nSwitchesPerGrid, nHostsPerSwitch):
 
     print "*** Adding Switches"
 
-    switchList = sorted(list(SwitchPortVlanMapping.keys()), key=lambda switch_number: int(switch_number[1:]))
+    switchList = sorted(list(SwitchPortVlanMapping.keys()), key=lambda switch_number: int(switch_number[1:], 16))
     print "switchList = ", switchList
     for onosSwitchId in switchList:
         switchName = getSwitchName(onosSwitchId)
         switch = net.addSwitch(switchName)
         SwitchObjs[switchName] = switch
 
-    switchList = sorted(list(SwitchObjs.keys()), key=lambda switch_number: int(switch_number[1:]))
+    switchList = sorted(list(SwitchObjs.keys()), key=lambda switch_number: int(switch_number[1:], 16))
     hostNodeList = sorted(list(HostNodes.keys()), key=lambda host_number: int(host_number[1:]))
 
     print "*** Adding Hosts"
@@ -430,7 +430,7 @@ if __name__ == '__main__':
 
     nGrids = 1
     nSwitchesPerGrid = 3  # >= 2
-    nHostsPerSwitch = 4 # >= 2
+    nHostsPerSwitch = 6  # >= 2
     controlVlanId = 255
     controlVlanTCPDest = 20000
 
